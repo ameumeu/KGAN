@@ -20,3 +20,27 @@ def initialize_weights(
     elif isinstance(layer, (nn.Linear, nn.BatchNorm2d)):
         torch.nn.init.normal_(layer.weight, mean, std)
         torch.nn.init.constant_(layer.bias, 0)
+
+
+def plot_model(model,
+               to_file='model.png',
+               show_shapes=False,
+               show_layer_names=True,
+               rankdir='TB',
+               expand_nested=False,
+               dpi=96):
+    dot = model_to_dot(model, show_shapes, show_layer_names, rankdir,
+                       expand_nested, dpi)
+    _, extension = os.path.splitext(to_file)
+    if not extension:
+        extension = 'png'
+    else:
+        extension = extension[1:]
+    dot.write(to_file, format=extension)
+    # Return the image as a Jupyter Image object, to be displayed in-line.
+    if extension != 'pdf':
+        try:
+            from IPython import display
+            return display.Image(filename=to_file)
+        except ImportError:
+            pass
