@@ -6,9 +6,6 @@ import numpy as np
 import os
 import os
 import pickle
-from typing import Iterable
-from progress.bar import IncrementalBar
-import time
 import matplotlib.pyplot as plt
 
 from music21 import note, stream, duration, tempo
@@ -87,115 +84,90 @@ class KMuseGAN():
         }
         print("KMuseGan is ready!")
 
+    def train_critic(
+        self,
+        x_train,
+        batch_size,
+        using_generator,
+    ):
+        valid = np.ones((batch_size,1), dtype=np.float32)
+        fake = -np.ones((batch_size,1), dtype=np.float32)
+        dummy = np.zeros((batch_size, 1), dtype=np.float32) # Dummy gt for gradient penalty
+
+        if using_generator:
+            true_imgs = next(x_train)[0]
+            if true_imgs.shape[0] != batch_size:
+                true_imgs = next(x_train)[0]
+        
+        else:
+            idx = np.random.randint(0, x_train.shape[0], batch_size)
+            true_imgs = x_train[idx]
+
+        chords_noise = np.random.normal(0, 1, (batch_size, self.z_dim))
+        style_noise = np.random.normal(0, 1, (batch_size, self.z_dim))
+        melody_noise = np.random.normal(0, 1, (batch_size, self.n_tracks, self.z_dim))
+        groove_noise = np.random.normal(0, 1, (batch_size, self.n_tracks, self.z_dim))
+
+        d_loss = self.critic.train_on_batch([true_imgs, chords_noise, style_noise,melody_noise,groove_noise], [valid, fake, dummy])
+        return d_loss
+
+    def train_generator(self, batch_size):
+        valid = np.ones((batch_size,1), dtype=np.float32)
+        
+        chords_noise = np.random.normal(0, 1, (batch_size, self.z_dim))
+        style_noise = np.random.normal(0, 1, (batch_size, self.z_dim))
+        melody_noise = np.random.normal(0, 1, (batch_size, self.n_tracks, self.z_dim))
+        groove_noise = np.random.normal(0, 1, (batch_size, self.n_tracks, self.z_dim))
+
+        return self.model.train_on_batch([chords_noise, style_noise,melody_noise,groove_noise], valid)
+
     def train(
         self,
-        dataloader: Iterable,
-        epochs: int = 500,
+        dataloader, 
         batch_size: int = 64,
-        display_epoch: int = 10
+        epochs: int = 500,
+        run_folder: str = '',
+        print_every_n_batches: int = 10,
+        n_critic: int = 5,
+        using_generator: bool = False
     ) -> None:
-        """Train GAN.
-        Parameters
-        ----------
-        dataloader: Iterable
-            Dataloader.
-        epochs: int, (default=500)
-            Number of epochs.
-        batch_size: int, (default=64)
-            Batch size.
-        display_epoch: int, (default=10)
-            Display step.
-        """
-        # alpha parameter for mixing images
-        self.alpha = torch.rand((batch_size, 1, 1, 1, 1)).requires_grad_().to(self.device)
+
+        self.alpha = torch.rand((batch_size,1,1,1,1)).requires_grad_().to(self.device)
+
         for epoch in range(epochs):
-            ge_loss, ce_loss = 0, 0
-            cfe_loss, cre_loss, cpe_loss = 0, 0, 0
-            start = time.time()
-            bar = IncrementalBar(f'[Epoch {epoch+1}/{epochs}]', max=len(dataloader))
-            for real in dataloader:
-                real = real.to(self.device)
-                # train Critic
-                cb_loss = 0
-                cfb_loss, crb_loss, cpb_loss = 0, 0, 0
-                for _ in range(5):
-                    # create random `noises`
-                    chords = torch.randn(batch_size, 32).to(self.device)
-                    style = torch.randn(batch_size, 32).to(self.device)
-                    melody = torch.randn(batch_size, 4, 32).to(self.device)
-                    groove = torch.randn(batch_size, 4, 32).to(self.device)
-                    # forward to generator
-                    self.c_optim.zero_grad()
-                    with torch.no_grad():
-                        fake = self.generator(chords, style, melody, groove).detach()
-                    # mix `real` and `fake` melody
-                    realfake = self.alpha * real + (1. - self.alpha) * fake
-                    # get critic's `fake` loss
-                    fake_pred = self.critic(fake)
-                    fake_target = - torch.ones_like(fake_pred)
-                    fake_loss = self.c_criterion(fake_pred, fake_target)
-                    # get critic's `real` loss
-                    real_pred = self.critic(real)
-                    real_target = torch.ones_like(real_pred)
-                    real_loss = self.c_criterion(real_pred, real_target)
-                    # get critic's penalty
-                    realfake_pred = self.critic(realfake)
-                    penalty = self.c_penalty(realfake, realfake_pred)
-                    # sum up losses
-                    closs = fake_loss + real_loss + 10 * penalty
-                    # retain graph
-                    closs.backward(retain_graph=True)
-                    # update critic parameters
-                    self.c_optim.step()
-                    # devide by number of critic updates in the loop (5)
-                    cfb_loss += fake_loss.item() / 5
-                    crb_loss += real_loss.item() / 5
-                    cpb_loss += 10 * penalty.item() / 5
-                    cb_loss += closs.item() / 5
+            if epoch % 100 == 0:
+                critic_loops = 5
+            else:
+                critic_loops = n_critic
 
-                cfe_loss += cfb_loss / len(dataloader)
-                cre_loss += crb_loss / len(dataloader)
-                cpe_loss += cpb_loss / len(dataloader)
-                ce_loss += cb_loss / len(dataloader)
+            for _ in range(critic_loops):
+                d_loss = self.train_critic(x_train, batch_size, using_generator)
+            
+            g_loss = self.train_generator(batch_size)
 
-                # train generator
-                self.g_optim.zero_grad()
-                # create random `noises`
-                chords = torch.randn(batch_size, 32).to(self.device)
-                style = torch.randn(batch_size, 32).to(self.device)
-                melody = torch.randn(batch_size, 4, 32).to(self.device)
-                groove = torch.randn(batch_size, 4, 32).to(self.device)
-                # forward to generator
-                fake = self.generator(chords, style, melody, groove)
-                # forward to critic (to make prediction)
-                fake_pred = self.critic(fake)
-                # get generator loss (idea is to fool critic)
-                gb_loss = self.g_criterion(fake_pred, torch.ones_like(fake_pred))
-                gb_loss.backward()
-                # update critic parameters
-                self.g_optim.step()
-                ge_loss += gb_loss.item() / len(dataloader)
-                bar.next()
-            bar.finish()
-            end = time.time()
-            tm = (end - start)
-            # save history
-            self.data['g_loss'].append(ge_loss)
-            self.data['c_loss'].append(ce_loss)
-            self.data['cf_loss'].append(cfe_loss)
-            self.data['cr_loss'].append(cre_loss)
-            self.data['cp_loss'].append(cpe_loss)
-            # display losses
-            if epoch % 10 == 0:
-                print("[Epoch %d/%d] [G loss: %.3f] [D loss: %.3f] ETA: %.3fs" % (
-                    epoch + 1,
-                    epochs,
-                    ge_loss,
-                    ce_loss,
-                    tm
-                ))
-                print(f"[C loss | (fake: {cfe_loss:.3f}, real: {cre_loss:.3f}, penalty: {cpe_loss:.3f})]")
+            
+            print(f"{epoch} ({critic_loops}, {1}) [D loss: ({d_loss[0]:.1f})(R {d_loss[1]:.1f}, F {d_loss[2]:.1f}, G {d_loss[3]:.1f})] [G loss: {g_loss:.1f}]")
+            
 
+            self.d_losses.append(d_loss)
+            self.g_losses.append(g_loss)
+
+            # If at save interval => save generated image samples
+            if epoch % print_every_n_batches == 0:
+                self.sample_images(run_folder)
+                
+                self.generator.save_weights(os.path.join(run_folder, 'weights/weights-g.h5'))
+                
+                self.critic.save_weights(os.path.join(run_folder, 'weights/weights-c.h5'))
+
+                self.save_model(run_folder)
+
+            if epoch % 500 == 0:
+                self.generator.save_weights(os.path.join(run_folder, f'weights/weights-g-{epoch}.h5'))
+                self.critic.save_weights(os.path.join(run_folder, f'weights/weights-c-{epoch}.h5'))
+                
+
+            self.epoch+=1
 
     def sample_images(self, run_folder):
         r = 5

@@ -68,8 +68,10 @@ class Generator(nn.Module):
 
                 z_input = torch.cat([c,s,m,g], axis=1)
 
-                track_output[track] = self.barGen(z_input)
+                track_output[track] = self.barGen[track](z_input)
 
-            bars_output[bar] = torch.cat(track_output, axis=-1)
+            bars_output[bar] = torch.cat(track_output, axis=1)
 
-        generator_output = torch.cat(bars_output, axis=1)
+        generator_output = torch.cat(bars_output, axis=2)
+
+        return generator_output

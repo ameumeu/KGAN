@@ -27,46 +27,46 @@ class BarGenerator(nn.Module):
         self.relu = nn.ReLU()
 
         self.convT_in =  nn.ConvTranspose2d(
-            self.hid_c,
+            self.hid_c//2,
             self.hid_c//2,
             kernel_size=(2,1),
             stride=(2,1),
-            padding='same',
+            padding=0,
         )
         self.convT_1 =  nn.ConvTranspose2d(
             self.hid_c//2,
             self.hid_c//4,
             kernel_size=(2,1),
             stride=(2,1),
-            padding='same',
+            padding=0,
         )
         self.convT_2 =  nn.ConvTranspose2d(
             self.hid_c//4,
             self.hid_c//4,
             kernel_size=(2,1),
             stride=(2,1),
-            padding='same',
+            padding=0,
         )
         self.convT_3 =  nn.ConvTranspose2d(
             self.hid_c//4,
             self.hid_c//4,
             kernel_size=(1,7),
             stride=(1,7),
-            padding='same',
+            padding=0,
         )
         self.convT_out =  nn.ConvTranspose2d(
             self.hid_c//4,
             1,
             kernel_size=(1,12),
             stride=(1,12),
-            padding='same',
+            padding=0,
         )
 
-        self.batchnorm_first = nn.BatchNorm2d(1, moomentum=0.9)
-        self.batchnorm_in = nn.BatchNorm2d(self.hid_c, momentum=0.9)
-        self.batchnorm_1 = nn.BatchNorm2d(self.hid_c/2, momentum=0.9)
-        self.batchnorm_2 = nn.BatchNorm2d(self.hid_c/2, momentum=0.9)
-        self.batchnorm_3 = nn.BatchNorm2d(self.hid_c/2, momentum=0.9)
+        self.batchnorm_first = nn.BatchNorm1d(num_features=hid_c, momentum=0.9)
+        self.batchnorm_in = nn.BatchNorm2d(num_features=self.hid_c//2, momentum=0.9)
+        self.batchnorm_1 = nn.BatchNorm2d(num_features=self.hid_c//4, momentum=0.9)
+        self.batchnorm_2 = nn.BatchNorm2d(num_features=self.hid_c//4, momentum=0.9)
+        self.batchnorm_3 = nn.BatchNorm2d(num_features=self.hid_c//4, momentum=0.9)
 
 
         # activation layer
@@ -75,9 +75,10 @@ class BarGenerator(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
 
-        x = torch.reshape(x, (2,1,512))
 
         x = self.relu(self.batchnorm_first(self.fc_1(x)))
+         
+        x = torch.reshape(x, (x.size(0), self.hid_c//2,2,1))
 
         x = self.relu(self.batchnorm_in(self.convT_in(x)))
 
@@ -87,6 +88,6 @@ class BarGenerator(nn.Module):
 
         x = self.tanh((self.convT_out(x)))
 
-        output = torch.reshape(x, (1, self.n_steps_per_bar, self.n_pitches, 1))
+        output = torch.reshape(x, (x.size(0),1, 1, self.n_steps_per_bar, self.n_pitches))
 
         return output

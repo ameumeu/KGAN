@@ -22,18 +22,18 @@ class TemporalNetwork(nn.Module):
 
         # Convolution 2D Transpose Layers
         self.convT_in = nn.ConvTranspose2d(
-           in_channeals=self.z_dim,
+            in_channels=self.z_dim,
             out_channels=self.hid_c,
             kernel_size=(2,1),
             stride=(1,1),
-            padding='valid'
+            padding=0
         )
         self.convT_out = nn.ConvTranspose2d(
-           in_channeals=self.hid_c,
+            in_channels=self.hid_c,
             out_channels=self.z_dim,
             kernel_size=(self.n_bars-1,1),
             stride=(1,1),
-            padding='valid'
+            padding=0
         )
 
         self.batchnorm_1 = nn.BatchNorm2d(self.hid_c, momentum=0.9)
@@ -48,13 +48,13 @@ class TemporalNetwork(nn.Module):
         x: torch.Tensor,
     ) -> torch.Tensor:
 
-        x = torch.reshape(x, [1, 1, self.z_dim])
+        x = torch.reshape(x, [x.size(0), self.z_dim, 1, 1])
 
         x = self.relu(self.batchnorm_1(self.convT_in(x)))
 
         x = self.leaky_relu(self.batchnorm_2(self.convT_out(x)))
 
-        output = torch.reshape(x, (self.n_bars, self.z_dim))
+        output = torch.reshape(x, (x.size(0), self.n_bars, self.z_dim))
 
         return output
         
