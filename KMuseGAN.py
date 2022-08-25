@@ -27,13 +27,13 @@ class KMuseGAN():
         n_bars: int,
         n_steps_per_bar: int,
         n_pitches: int,
+        g_path: str,
+        c_path: str,
         g_channel: int,
         c_channel: int,
         g_lr: float,
         c_lr: float,
         device: str,
-        output_path: str,
-        print_every_n_batches: int = 10,
     ) -> None:
 
         self.z_dim = z_dim
@@ -41,10 +41,11 @@ class KMuseGAN():
         self.n_bars = n_bars
         self.n_steps_per_bar = n_steps_per_bar
         self.n_pitches = n_pitches
+        self.g_channel = g_channel
+        self.c_channel = c_channel
         self.g_lr = g_lr
         self.c_lr = c_lr
         self.device = device
-        self.print_every_n_batches = print_every_n_batches
 
         self.d_losses = []
         self.g_losses = []
@@ -54,6 +55,7 @@ class KMuseGAN():
         self.generator = Generator(
             z_dim=z_dim,
             hid_c=g_channel,
+            device=self.device,
         ).to(device)
         self.generator.apply(initialize_weights)
         self.g_optim = optim.Adam(
@@ -61,6 +63,9 @@ class KMuseGAN():
             lr=g_lr,
             betas=(0.5, 0.9)
         )
+        if g_path:
+            self.generator.load_state_dict(torch.load(g_path))
+            self.generator.eval()
 
         # build critic
         self.critic = Critic(
@@ -73,6 +78,9 @@ class KMuseGAN():
             lr=c_lr,
             betas=(0.5, 0.9),
         )
+        if c_path:
+            self.critic.load_state_dict(torch.load(c_path))
+            self.critic.eval()
 
         # loss function and gradient penalty (wasserstein)
         self.g_criterion = WassersteinLoss().to(device)
@@ -92,10 +100,10 @@ class KMuseGAN():
     def train(
         self,
         dataloader: Iterable,
-        run_folder: str,
+        output_path: str,
         epochs: int = 500,
         batch_size: int = 64,
-        display_epoch: int = 10,
+        display_epoch: int = 100,
         n_critic = 5,
     ) -> None:
         """Train GAN.
@@ -198,52 +206,47 @@ class KMuseGAN():
             # display losses
             print(f"[Epoch {epoch+1}/{epochs}] [G loss: {ge_loss:.3f}] [D loss: {ce_loss:.3f}] ETA: {tm:.3f}s")
             print(f"[C loss | (fake: {cfe_loss:.3f}, real: {cre_loss:.3f}, penalty: {cpe_loss:.3f})]")
-            if epoch % self.print_every_n_batches == 0:
-                self.sample_images(run_folder)
+            if epoch % display_epoch == 0:
+                self.sample_images(output_path)
                 
-                self.generator.save_weights(os.path.join(run_folder, 'weights/weights-g.h5'))
+                torch.save(self.generator.state_dict(), os.path.join(output_path, f'weights/weights-g-{epoch}.pth'))
                 
-                self.critic.save_weights(os.path.join(run_folder, 'weights/weights-c.h5'))
-
-
-                self.save_model(run_folder)
-
-            if epoch % 500 == 0:
-                self.generator.save_weights(os.path.join(run_folder, f'weights/weights-g-{epoch}.h5' ))
-                self.critic.save_weights(os.path.join(run_folder, f'weights/weights-c-{epoch}.h5'))
+                torch.save(self.critic.state_dict(), os.path.join(output_path, f'weights/weights-c-{epoch}.pth'))
 
             self.epoch += 1
 
 
-    def sample_images(self, run_folder):
+    def sample_images(self, output_path):
         r = 5
 
-        chords_noise = np.random.normal(0, 1, (r, self.z_dim))
-        style_noise = np.random.normal(0, 1, (r, self.z_dim))
-        melody_noise = np.random.normal(0, 1, (r, self.n_tracks, self.z_dim))
-        groove_noise = np.random.normal(0, 1, (r, self.n_tracks, self.z_dim))
+        chords_input = torch.normal(0, 1, (r, self.z_dim)).to(self.device)
+        style_input = torch.normal(0, 1, (r, self.z_dim)).to(self.device)
+        melody_input = torch.normal(0, 1, (r, self.n_tracks, self.z_dim)).to(self.device)
+        groove_input = torch.normal(0, 1, (r, self.n_tracks, self.z_dim)).to(self.device)
 
-        gen_scores = self.generator.predict([chords_noise, style_noise, melody_noise, groove_noise])
+        with torch.no_grad():
+            gen_scores = self.generator(chords_input, style_input, melody_input, groove_input).detach()
 
-        np.save(os.path.join(run_folder, f"images/sample_{self.epoch}.npy"), gen_scores)
+        np.save(os.path.join(output_path, f"images/sample_{self.epoch}.npy"), gen_scores.to('cpu'))
 
-        self.notes_to_midi(run_folder, gen_scores, 0)
+        self.notes_to_midi(output_path, gen_scores, 0)
 
     def binarise_output(self, output):
         # output is a set of scores: [batch size , steps , pitches , tracks]
 
-        max_pitches = np.argmax(output, axis = 3)
+        max_pitches = np.argmax(output.to('cpu'), axis = 3)
 
         return max_pitches
 
 
-    def notes_to_midi(self, run_folder, output, filename = None):
+    def notes_to_midi(self, output_path, output, filename = None):
 
         for score_num in range(len(output)):
 
             max_pitches = self.binarise_output(output)
 
-            midi_note_score = max_pitches[score_num].reshape([self.n_bars * self.n_steps_per_bar, self.n_tracks])
+            # midi_note_score = max_pitches[score_num].reshape([self.n_bars * self.n_steps_per_bar, self.n_tracks])
+            midi_note_score = max_pitches[score_num].T.reshape([-1, self.n_tracks])
             parts = stream.Score()
             parts.append(tempo.MetronomeMark(number= 66))
 
@@ -272,41 +275,35 @@ class KMuseGAN():
                 parts.append(s)
 
             if filename is None:
-                parts.write('midi', fp=os.path.join(run_folder, "samples/sample_{}_{}.midi".format(self.epoch, score_num)))
+                parts.write('midi', fp=os.path.join(output_path, "samples/sample_{}_{}.midi".format(self.epoch, score_num)))
             else:
-                parts.write('midi', fp=os.path.join(run_folder, "samples/{}.midi".format(filename)))
-
-
-
+                parts.write('midi', fp=os.path.join(output_path, "samples/{}.midi".format(filename)))
 
 
     def save(self, folder):
 
             with open(os.path.join(folder, 'params.pkl'), 'wb') as f:
                 pickle.dump([
-                    self.c_lr,
-                    self.g_lr,
                     self.z_dim,
                     self.n_tracks,
                     self.n_bars,
                     self.n_steps_per_bar,
                     self.n_pitches,
+                    self.g_channel,
+                    self.c_channel,
+                    self.g_lr,
+                    self.c_lr,
                     ], f)
 
-    def save_model(self, run_folder):
-        self.model.save(os.path.join(run_folder, 'model.h5'))
-        self.critic.save(os.path.join(run_folder, 'critic.h5'))
-        self.generator.save(os.path.join(run_folder, 'generator.h5'))
-
-    def load_weights(self, run_folder, epoch=None):
+    def load_weights(self, output_path, epoch=None):
 
         if epoch is None:
 
-            self.generator.load_weights(os.path.join(run_folder, 'weights', 'weights-g.h5'))
-            self.critic.load_weights(os.path.join(run_folder, 'weights', 'weights-c.h5'))
+            self.generator.load_state_dict(torch.load(os.path.join(output_path, 'weights', 'weights-g.h5')))
+            self.critic.load_state_dict(torch.load(os.path.join(output_path, 'weights', 'weights-c.h5')))
         else:
-            self.generator.load_weights(os.path.join(run_folder, 'weights', f'weights-g-{epoch}.h5'))
-            self.critic.load_weights(os.path.join(run_folder, 'weights', f'weights-c-{epoch}.h5'))
+            self.generator.load_state_dict(torch.load(os.path.join(output_path, 'weights', f'weights-g-{epoch}.h5')))
+            self.critic.load_state_dict(torch.load(os.path.join(output_path, 'weights', f'weights-c-{epoch}.h5')))
 
     def draw_bar(self, data, score_num, bar, part):
         plt.imshow(data[score_num,bar,:,:,part].transpose([1,0]), origin='lower', cmap = 'Greys', vmin=-1, vmax=1)

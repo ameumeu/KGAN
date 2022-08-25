@@ -12,6 +12,7 @@ class Generator(nn.Module):
         hid_c: int = 1024,
         n_tracks: int = 4,
         n_bars: int = 2,
+        device: str = "cuda:0"
     ) -> None:
         super(Generator, self).__init__()
 
@@ -24,17 +25,17 @@ class Generator(nn.Module):
         self.chords_tempNet = TemporalNetwork(
             z_dim=self.z_dim,
             hid_c=self.hid_c
-        )
+        ).to(device)
 
         # melody -> TemmporalNetwork
         self.melody_tempNet = [None] * self.n_tracks
         for track in range(self.n_tracks):
-            self.melody_tempNet[track] = TemporalNetwork()
+            self.melody_tempNet[track] = TemporalNetwork().to(device)
 
         # BarGenerator per track
         self.barGen = [None] * self.n_tracks
         for track in range(self.n_tracks):
-            self.barGen[track] = BarGenerator()
+            self.barGen[track] = BarGenerator().to(device)
 
         # output per track and bar
 
