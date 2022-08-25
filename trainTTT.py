@@ -52,3 +52,19 @@ if __name__ == "__main__":
     print("Start training ...")
     gan.train(dataloader=dataloader, epochs=args.epochs)
     print("Training finished.")
+
+    print("Loading plot")
+    fig = plt.figure()
+    plt.plot([x[0] for x in gan.data['c_loss']], color='black', linewidth=0.25)
+
+    plt.plot([x[1] for x in gan.data['cr_loss']], color='green', linewidth=0.25)
+    plt.plot([x[2] for x in gan.data['cf_loss']], color='red', linewidth=0.25)
+    plt.plot(gan.data['g_loss'], color='orange', linewidth=0.25)
+
+    plt.xlabel('batch', fontsize=18)
+    plt.ylabel('loss', fontsize=16)
+
+    plt.xlim(0, len(gan.d_losses))
+    # plt.ylim(0, 2)
+
+    plt.show()

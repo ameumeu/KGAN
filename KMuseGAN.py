@@ -33,6 +33,7 @@ class KMuseGAN():
         c_lr: float,
         device: str,
         output_path: str,
+        print_every_n_batches: int = 10,
     ) -> None:
 
         self.z_dim = z_dim
@@ -43,6 +44,7 @@ class KMuseGAN():
         self.g_lr = g_lr
         self.c_lr = c_lr
         self.device = device
+        self.print_every_n_batches = print_every_n_batches
 
         self.d_losses = []
         self.g_losses = []
@@ -79,20 +81,22 @@ class KMuseGAN():
 
         # dictionary
         self.data = {
-            "g_loss": [],
-            "c_loss": [],
-            "cf_loss": [],
-            "cr_loss": [],
-            "cp_loss": [],
+            "g_loss": [], # generator loss
+            "c_loss": [], # critic loss
+            "cf_loss": [], # critic fake loss
+            "cr_loss": [], # critic real loss
+            "cp_loss": [], # critic penalty loss
         }
         print("KMuseGan is ready!")
 
     def train(
         self,
         dataloader: Iterable,
+        run_folder: str,
         epochs: int = 500,
         batch_size: int = 64,
-        display_epoch: int = 10
+        display_epoch: int = 10,
+        n_critic = 5,
     ) -> None:
         """Train GAN.
         Parameters
@@ -108,7 +112,7 @@ class KMuseGAN():
         """
         # alpha parameter for mixing images
         self.alpha = torch.rand((batch_size, 1, 1, 1, 1)).requires_grad_().to(self.device)
-        for epoch in range(epochs):
+        for epoch in range(self.epoch, self.epoch + epochs):
             ge_loss, ce_loss = 0, 0
             cfe_loss, cre_loss, cpe_loss = 0, 0, 0
             start = time.time()
@@ -118,7 +122,13 @@ class KMuseGAN():
                 # train Critic
                 cb_loss = 0
                 cfb_loss, crb_loss, cpb_loss = 0, 0, 0
-                for _ in range(5):
+
+                if epoch % 100 == 0:
+                    critic_loops = 5
+                else:
+                    critic_loops = n_critic
+
+                for _ in range(critic_loops):
                     # create random `noises`
                     chords = torch.randn(batch_size, 32).to(self.device)
                     style = torch.randn(batch_size, 32).to(self.device)
@@ -186,15 +196,23 @@ class KMuseGAN():
             self.data['cr_loss'].append(cre_loss)
             self.data['cp_loss'].append(cpe_loss)
             # display losses
-            if epoch % 10 == 0:
-                print("[Epoch %d/%d] [G loss: %.3f] [D loss: %.3f] ETA: %.3fs" % (
-                    epoch + 1,
-                    epochs,
-                    ge_loss,
-                    ce_loss,
-                    tm
-                ))
-                print(f"[C loss | (fake: {cfe_loss:.3f}, real: {cre_loss:.3f}, penalty: {cpe_loss:.3f})]")
+            print(f"[Epoch {epoch+1}/{epochs}] [G loss: {ge_loss:.3f}] [D loss: {ce_loss:.3f}] ETA: {tm:.3f}s")
+            print(f"[C loss | (fake: {cfe_loss:.3f}, real: {cre_loss:.3f}, penalty: {cpe_loss:.3f})]")
+            if epoch % self.print_every_n_batches == 0:
+                self.sample_images(run_folder)
+                
+                self.generator.save_weights(os.path.join(run_folder, 'weights/weights-g.h5'))
+                
+                self.critic.save_weights(os.path.join(run_folder, 'weights/weights-c.h5'))
+
+
+                self.save_model(run_folder)
+
+            if epoch % 500 == 0:
+                self.generator.save_weights(os.path.join(run_folder, f'weights/weights-g-{epoch}.h5' ))
+                self.critic.save_weights(os.path.join(run_folder, f'weights/weights-c-{epoch}.h5'))
+
+            self.epoch += 1
 
 
     def sample_images(self, run_folder):
